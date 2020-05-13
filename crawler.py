@@ -4,9 +4,6 @@ from io import StringIO
 from arsenic import browsers, get_session, services
 from lxml import etree
 
-
-
-
 class NewsCrawler():
     def __init__(self):
         self.service = services.Chromedriver()
@@ -67,15 +64,25 @@ class NewsCrawler():
                 'content': '',
                 'headline': '',
                 'published': '',
+                'url': html[1]
             }
-            tree = self._parse_etree_from_html(html)
-            h1_elements = tree.xpath('//h1')
-            for elem in h1_elements:
-                if elem.text:
-                    new_article['headline'] += elem.text
-        
-        return parsed_articles
 
+            html = html[0]
+            tree = self._parse_etree_from_html(html)
+            h1_elements = tree.xpath('//h1[contains(@class, "yle__article__heading")]')
+            for elem in h1_elements:
+                new_article['headline'] += ' '.join(elem.itertext())
+
+            content_elements = tree.xpath('//div[@class="yle__article__content"]')
+            for elem in content_elements:
+                new_article['content'] += ' '.join(elem.itertext())
+
+            publish_elements = tree.xpath('//span[@class="yle__article__date--published"]')
+            for elem in publish_elements:
+                new_article['published'] += ' '.join(elem.itertext())
+            
+            parsed_articles.append(new_article)        
+        return parsed_articles
 
     def _validate_links(self, news_site_url, links):
         validated_links = []
@@ -84,14 +91,15 @@ class NewsCrawler():
                 validated_links.append(link)
             elif link.startswith('/'):
                 validated_links.append(news_site_url + link)
-
+            else:
+                continue
         return validated_links
 
     async def _request_url(self, url, session):
         async with self.request_semaphore:
             await session.get(url)
             html = await session.get_page_source()
-        return html
+        return html, url
  
     async def _fetch_articles(self, urls):
         async with get_session(self.service, self.browser) as session:
@@ -105,11 +113,11 @@ class NewsCrawler():
 
     async def crawl_news(self, news_site_url):
         async with get_session(self.service, self.browser) as session:
-            html = await self._request_url(news_site_url, session)
+            html, _ = await self._request_url(news_site_url, session)
 
         tree = self._parse_etree_from_html(html)
         newslinks = self._parse_interesting_links_from_tree(tree)
-        validated_newslinks = self._validate_links(news_site_url, newslinks)
+        validated_newslinks = self._validate_links('https://yle.fi', newslinks)
         article_htmls = await self._fetch_articles(validated_newslinks)
         news_articles = self._parse_articles_from_htmls(article_htmls)
         return news_articles
@@ -119,4 +127,5 @@ if __name__ == "__main__":
     crawler = NewsCrawler()
     loop = asyncio.get_event_loop()
     news = loop.run_until_complete(crawler.crawl_news(url))
-    print(news)
+    print(len(news))
+    print(news[0])
